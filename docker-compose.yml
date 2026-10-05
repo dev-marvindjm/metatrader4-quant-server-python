@@ -1,0 +1,95 @@
+services:
+  # ==========================================
+  # Database Service (PostgreSQL 16)
+  # ==========================================
+  db:
+    image: postgres:16-alpine
+    container_name: quant-postgres-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1234}
+      POSTGRES_DB: ${POSTGRES_DB:-quant_trading}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - quant_pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-quant_trading}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - quant-network
+
+  # ==========================================
+  # FastAPI Quant Trading API Service
+  # ==========================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quant-trading-api
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DEBUG=${DEBUG:-false}
+      - HOST=0.0.0.0
+      - PORT=8000
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-1234}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-quant_trading}
+      - SECRET_KEY=${SECRET_KEY:-quant-server-secret-key-change-in-production-32b!}
+      - FERNET_KEY=${FERNET_KEY:-v9-eJ9K_FmQy6M9P4_5H6l2_jZ2y_8z0_3u5t_X4w1A=}
+      - API_KEY=${API_KEY:-}
+      - MT5_API_URL=${MT5_API_URL:-http://mt5:5001}
+    volumes:
+      - ./app:/app/app:ro
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      quant-network:
+        aliases:
+          - metatrader5-quant-server
+
+  # ==========================================
+  # MetaTrader 5 Wine Gateway (Optional)
+  # ==========================================
+  mt5:
+    build:
+      context: backend/mt5
+      dockerfile: Dockerfile
+    container_name: quant-mt5-gateway
+    restart: unless-stopped
+    shm_size: "1gb"
+    environment:
+      - CUSTOM_USER=${CUSTOM_USER:-admin}
+      - PASSWORD=${PASSWORD:-admin1234}
+      - MT5_API_PORT=5001
+      - MT5_LOGIN=${MT5_LOGIN:-}
+      - MT5_PASSWORD=${MT5_PASSWORD:-}
+      - MT5_SERVER=${MT5_SERVER:-}
+    volumes:
+      - quant_mt5_config:/config
+    ports:
+      - "${VNC_PORT:-3000}:3000"
+      - "5001:5001"
+    networks:
+      - quant-network
+
+volumes:
+  quant_pgdata:
+    driver: local
+  quant_mt5_config:
+    driver: local
+
+networks:
+  quant-network:
+    name: quant-network
+    driver: bridge
